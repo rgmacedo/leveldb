@@ -414,6 +414,7 @@ class PosixWritableFile final : public WritableFile {
 
 #if HAVE_FDATASYNC
     // TODO: fdatasync operation
+    Env::update_instrumentation_entry ("fdatasync", 1);
     bool sync_success = ::fdatasync(fd) == 0;
 #else
     // TODO: fsync operation

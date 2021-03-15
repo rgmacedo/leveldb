@@ -23,6 +23,7 @@
 
 #include <unordered_map>
 #include <iostream>
+#include <mutex>
 
 // This workaround can be removed when leveldb::Env::DeleteFile is removed.
 #if defined(_WIN32)
