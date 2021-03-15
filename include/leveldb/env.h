@@ -21,6 +21,9 @@
 #include "leveldb/export.h"
 #include "leveldb/status.h"
 
+#include <unordered_map>
+#include <iostream>
+
 // This workaround can be removed when leveldb::Env::DeleteFile is removed.
 #if defined(_WIN32)
 // On Windows, the method name DeleteFile (below) introduces the risk of
@@ -50,6 +53,12 @@ class WritableFile;
 
 class LEVELDB_EXPORT Env {
  public:
+  static std::unordered_map <std::string, long> m_operation_instrumentation;
+  static std::mutex m_instrumentation_lock;
+
+  static void update_instrumentation_entry (const std::string& entry_name, long value);
+
+
   Env();
 
   Env(const Env&) = delete;

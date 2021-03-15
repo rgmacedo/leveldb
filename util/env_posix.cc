@@ -37,6 +37,22 @@
 
 namespace leveldb {
 
+std::unordered_map <std::string, long> Env::m_operation_instrumentation {};
+std::mutex Env::m_instrumentation_lock;
+
+void Env::update_instrumentation_entry (const std::string& entry_name, long value) {
+  std::unique_lock <std::mutex> unique_lock (Env::m_instrumentation_lock);
+
+  auto iterator = Env::m_operation_instrumentation.find (entry_name);
+
+  if (iterator != Env::m_operation_instrumentation.end()) {
+    iterator->second += value;
+  } else {
+    std::cout << "Instrumentation operation not found\n";
+  }
+
+}
+
 namespace {
 
 // Set by EnvPosixTestHelper::SetReadOnlyMMapLimit() and MaxOpenFiles().
@@ -114,6 +130,8 @@ class PosixSequentialFile final : public SequentialFile {
   Status Read(size_t n, Slice* result, char* scratch) override {
     Status status;
     while (true) {
+      // TODO: read operation
+      Env::update_instrumentation_entry ("read", 1);
       ::ssize_t read_size = ::read(fd_, scratch, n);
       if (read_size < 0) {  // Read error.
         if (errno == EINTR) {
@@ -156,6 +174,8 @@ class PosixRandomAccessFile final : public RandomAccessFile {
         filename_(std::move(filename)) {
     if (!has_permanent_fd_) {
       assert(fd_ == -1);
+      // TODO: close operation
+      Env::update_instrumentation_entry ("close", 1);
       ::close(fd);  // The file will be opened on every read.
     }
   }
@@ -163,6 +183,8 @@ class PosixRandomAccessFile final : public RandomAccessFile {
   ~PosixRandomAccessFile() override {
     if (has_permanent_fd_) {
       assert(fd_ != -1);
+      // TODO: close operation
+      Env::update_instrumentation_entry ("close", 1);
       ::close(fd_);
       fd_limiter_->Release();
     }
@@ -172,6 +194,8 @@ class PosixRandomAccessFile final : public RandomAccessFile {
               char* scratch) const override {
     int fd = fd_;
     if (!has_permanent_fd_) {
+      // TODO: open operation
+      Env::update_instrumentation_entry ("open", 1);
       fd = ::open(filename_.c_str(), O_RDONLY | kOpenBaseFlags);
       if (fd < 0) {
         return PosixError(filename_, errno);
@@ -181,6 +205,8 @@ class PosixRandomAccessFile final : public RandomAccessFile {
     assert(fd != -1);
 
     Status status;
+    // TODO: pread operation
+    Env::update_instrumentation_entry ("pread", 1);
     ssize_t read_size = ::pread(fd, scratch, n, static_cast<off_t>(offset));
     *result = Slice(scratch, (read_size < 0) ? 0 : read_size);
     if (read_size < 0) {
@@ -190,6 +216,8 @@ class PosixRandomAccessFile final : public RandomAccessFile {
     if (!has_permanent_fd_) {
       // Close the temporary file descriptor opened earlier.
       assert(fd != fd_);
+      // TODO: close operation
+      Env::update_instrumentation_entry ("close", 1);
       ::close(fd);
     }
     return status;
@@ -293,6 +321,8 @@ class PosixWritableFile final : public WritableFile {
 
   Status Close() override {
     Status status = FlushBuffer();
+    // TODO: close operation
+    Env::update_instrumentation_entry ("close", 1);
     const int close_result = ::close(fd_);
     if (close_result < 0 && status.ok()) {
       status = PosixError(filename_, errno);
@@ -331,6 +361,8 @@ class PosixWritableFile final : public WritableFile {
 
   Status WriteUnbuffered(const char* data, size_t size) {
     while (size > 0) {
+      // TODO: write operation
+      Env::update_instrumentation_entry ("write", 1);
       ssize_t write_result = ::write(fd_, data, size);
       if (write_result < 0) {
         if (errno == EINTR) {
@@ -349,12 +381,15 @@ class PosixWritableFile final : public WritableFile {
     if (!is_manifest_) {
       return status;
     }
-
+    // TODO: open operation
+    Env::update_instrumentation_entry ("open", 1);
     int fd = ::open(dirname_.c_str(), O_RDONLY | kOpenBaseFlags);
     if (fd < 0) {
       status = PosixError(dirname_, errno);
     } else {
       status = SyncFd(fd, dirname_);
+      // TODO: close operation
+      Env::update_instrumentation_entry ("close", 1);
       ::close(fd);
     }
     return status;
@@ -378,8 +413,11 @@ class PosixWritableFile final : public WritableFile {
 #endif  // HAVE_FULLFSYNC
 
 #if HAVE_FDATASYNC
+    // TODO: fdatasync operation
     bool sync_success = ::fdatasync(fd) == 0;
 #else
+    // TODO: fsync operation
+    Env::update_instrumentation_entry ("fsync", 1);
     bool sync_success = ::fsync(fd) == 0;
 #endif  // HAVE_FDATASYNC
 
@@ -491,14 +529,22 @@ class PosixEnv : public Env {
  public:
   PosixEnv();
   ~PosixEnv() override {
+
+    std::cout << "PosixEnv destructor was invoked ...\n";
+    this->print_instrumentation_results();
+
     static const char msg[] =
         "PosixEnv singleton destroyed. Unsupported behavior!\n";
+    // TODO: fwrite operation
+    Env::update_instrumentation_entry ("fwrite", 1);
     std::fwrite(msg, 1, sizeof(msg), stderr);
     std::abort();
   }
 
   Status NewSequentialFile(const std::string& filename,
                            SequentialFile** result) override {
+    // TODO: open operation
+    Env::update_instrumentation_entry ("open", 1);
     int fd = ::open(filename.c_str(), O_RDONLY | kOpenBaseFlags);
     if (fd < 0) {
       *result = nullptr;
@@ -512,6 +558,8 @@ class PosixEnv : public Env {
   Status NewRandomAccessFile(const std::string& filename,
                              RandomAccessFile** result) override {
     *result = nullptr;
+    // TODO: open operation
+    Env::update_instrumentation_entry ("open", 1);
     int fd = ::open(filename.c_str(), O_RDONLY | kOpenBaseFlags);
     if (fd < 0) {
       return PosixError(filename, errno);
@@ -535,6 +583,8 @@ class PosixEnv : public Env {
         status = PosixError(filename, errno);
       }
     }
+    // TODO: close operation
+    Env::update_instrumentation_entry ("close", 1);
     ::close(fd);
     if (!status.ok()) {
       mmap_limiter_.Release();
@@ -544,6 +594,8 @@ class PosixEnv : public Env {
 
   Status NewWritableFile(const std::string& filename,
                          WritableFile** result) override {
+    // TODO: open operation
+    Env::update_instrumentation_entry ("open", 1);
     int fd = ::open(filename.c_str(),
                     O_TRUNC | O_WRONLY | O_CREAT | kOpenBaseFlags, 0644);
     if (fd < 0) {
@@ -557,6 +609,8 @@ class PosixEnv : public Env {
 
   Status NewAppendableFile(const std::string& filename,
                            WritableFile** result) override {
+    // TODO: open operation
+    Env::update_instrumentation_entry ("open", 1);
     int fd = ::open(filename.c_str(),
                     O_APPEND | O_WRONLY | O_CREAT | kOpenBaseFlags, 0644);
     if (fd < 0) {
@@ -575,19 +629,27 @@ class PosixEnv : public Env {
   Status GetChildren(const std::string& directory_path,
                      std::vector<std::string>* result) override {
     result->clear();
+    // TODO: opendir operation
+    Env::update_instrumentation_entry ("opendir", 1);
     ::DIR* dir = ::opendir(directory_path.c_str());
     if (dir == nullptr) {
       return PosixError(directory_path, errno);
     }
     struct ::dirent* entry;
+    // TODO: readdir operation
+    Env::update_instrumentation_entry ("readdir", 1);
     while ((entry = ::readdir(dir)) != nullptr) {
       result->emplace_back(entry->d_name);
     }
+    // TODO: closedir operation
+    Env::update_instrumentation_entry ("closedir", 1);
     ::closedir(dir);
     return Status::OK();
   }
 
   Status RemoveFile(const std::string& filename) override {
+    // TODO: unlink operation
+    Env::update_instrumentation_entry ("unlink", 1);
     if (::unlink(filename.c_str()) != 0) {
       return PosixError(filename, errno);
     }
@@ -595,6 +657,8 @@ class PosixEnv : public Env {
   }
 
   Status CreateDir(const std::string& dirname) override {
+    // TODO: mkdir operation
+    Env::update_instrumentation_entry ("mkdir", 1);
     if (::mkdir(dirname.c_str(), 0755) != 0) {
       return PosixError(dirname, errno);
     }
@@ -602,6 +666,8 @@ class PosixEnv : public Env {
   }
 
   Status RemoveDir(const std::string& dirname) override {
+    // TODO: rmdir operation
+    Env::update_instrumentation_entry ("rmdir", 1);
     if (::rmdir(dirname.c_str()) != 0) {
       return PosixError(dirname, errno);
     }
@@ -610,6 +676,8 @@ class PosixEnv : public Env {
 
   Status GetFileSize(const std::string& filename, uint64_t* size) override {
     struct ::stat file_stat;
+    // TODO: stat operation
+    Env::update_instrumentation_entry ("stat", 1);
     if (::stat(filename.c_str(), &file_stat) != 0) {
       *size = 0;
       return PosixError(filename, errno);
@@ -619,6 +687,8 @@ class PosixEnv : public Env {
   }
 
   Status RenameFile(const std::string& from, const std::string& to) override {
+    // TODO: rename operation
+    Env::update_instrumentation_entry ("rename", 1);
     if (std::rename(from.c_str(), to.c_str()) != 0) {
       return PosixError(from, errno);
     }
@@ -628,18 +698,24 @@ class PosixEnv : public Env {
   Status LockFile(const std::string& filename, FileLock** lock) override {
     *lock = nullptr;
 
+    // TODO: open operation
+    Env::update_instrumentation_entry ("open", 1);
     int fd = ::open(filename.c_str(), O_RDWR | O_CREAT | kOpenBaseFlags, 0644);
     if (fd < 0) {
       return PosixError(filename, errno);
     }
 
     if (!locks_.Insert(filename)) {
+      // TODO: close operation
+      Env::update_instrumentation_entry ("close", 1);
       ::close(fd);
       return Status::IOError("lock " + filename, "already held by process");
     }
 
     if (LockOrUnlock(fd, true) == -1) {
       int lock_errno = errno;
+      // TODO: close operation
+      Env::update_instrumentation_entry ("close", 1);
       ::close(fd);
       locks_.Remove(filename);
       return PosixError("lock " + filename, lock_errno);
@@ -655,6 +731,8 @@ class PosixEnv : public Env {
       return PosixError("unlock " + posix_file_lock->filename(), errno);
     }
     locks_.Remove(posix_file_lock->filename());
+    // TODO: close operation
+    Env::update_instrumentation_entry ("close", 1);
     ::close(posix_file_lock->fd());
     delete posix_file_lock;
     return Status::OK();
@@ -687,6 +765,8 @@ class PosixEnv : public Env {
   }
 
   Status NewLogger(const std::string& filename, Logger** result) override {
+    // TODO: open operation
+    Env::update_instrumentation_entry ("open", 1);
     int fd = ::open(filename.c_str(),
                     O_APPEND | O_WRONLY | O_CREAT | kOpenBaseFlags, 0644);
     if (fd < 0) {
@@ -694,8 +774,12 @@ class PosixEnv : public Env {
       return PosixError(filename, errno);
     }
 
+    // TODO: fdopen operation
+    Env::update_instrumentation_entry ("fdopen", 1);
     std::FILE* fp = ::fdopen(fd, "w");
     if (fp == nullptr) {
+      // TODO: close operation
+      Env::update_instrumentation_entry ("close", 1);
       ::close(fd);
       *result = nullptr;
       return PosixError(filename, errno);
@@ -714,6 +798,97 @@ class PosixEnv : public Env {
 
   void SleepForMicroseconds(int micros) override {
     std::this_thread::sleep_for(std::chrono::microseconds(micros));
+  }
+
+  void initialize_instrumentation_container () {
+    // metadata operations
+    Env::m_operation_instrumentation.emplace ("open", 0);
+    Env::m_operation_instrumentation.emplace ("open-variadic", 0);
+    Env::m_operation_instrumentation.emplace ("creat", 0);
+    Env::m_operation_instrumentation.emplace ("openat", 0);
+    Env::m_operation_instrumentation.emplace ("openat-variadic", 0);
+    Env::m_operation_instrumentation.emplace ("open64", 0);
+    Env::m_operation_instrumentation.emplace ("open64-variadic", 0);
+    Env::m_operation_instrumentation.emplace ("close", 0);
+    Env::m_operation_instrumentation.emplace ("fsync", 0);
+    Env::m_operation_instrumentation.emplace ("fdatasync", 0);
+    Env::m_operation_instrumentation.emplace ("sync", 0);
+    Env::m_operation_instrumentation.emplace ("syncfs", 0);
+    Env::m_operation_instrumentation.emplace ("truncate", 0);
+    Env::m_operation_instrumentation.emplace ("ftruncate", 0);
+    Env::m_operation_instrumentation.emplace ("stat", 0);
+    Env::m_operation_instrumentation.emplace ("lstat", 0);
+    Env::m_operation_instrumentation.emplace ("fstat", 0);
+    Env::m_operation_instrumentation.emplace ("fstatat", 0);
+    Env::m_operation_instrumentation.emplace ("statfs", 0);
+    Env::m_operation_instrumentation.emplace ("fstatfs", 0);
+    Env::m_operation_instrumentation.emplace ("link", 0);
+    Env::m_operation_instrumentation.emplace ("unlink", 0);
+    Env::m_operation_instrumentation.emplace ("linkat", 0);
+    Env::m_operation_instrumentation.emplace ("unlinkat", 0);
+    Env::m_operation_instrumentation.emplace ("rename", 0);
+    Env::m_operation_instrumentation.emplace ("renameat", 0);
+    Env::m_operation_instrumentation.emplace ("symlink", 0);
+    Env::m_operation_instrumentation.emplace ("symlinkat", 0);
+    Env::m_operation_instrumentation.emplace ("readlink", 0);
+    Env::m_operation_instrumentation.emplace ("readlinkat", 0);
+    Env::m_operation_instrumentation.emplace ("fopen", 0);
+    Env::m_operation_instrumentation.emplace ("fdopen", 0);
+    Env::m_operation_instrumentation.emplace ("freopen", 0);
+    Env::m_operation_instrumentation.emplace ("fclose", 0);
+    Env::m_operation_instrumentation.emplace ("fflush", 0);
+
+    // data operations
+    Env::m_operation_instrumentation.emplace ("read", 0);
+    Env::m_operation_instrumentation.emplace ("write", 0);
+    Env::m_operation_instrumentation.emplace ("pread", 0);
+    Env::m_operation_instrumentation.emplace ("pwrite", 0);
+    Env::m_operation_instrumentation.emplace ("fread", 0);
+    Env::m_operation_instrumentation.emplace ("fwrite", 0);
+
+    // directory operations
+    Env::m_operation_instrumentation.emplace ("mkdir", 0);
+    Env::m_operation_instrumentation.emplace ("mkdirat", 0);
+    Env::m_operation_instrumentation.emplace ("readdir", 0);
+    Env::m_operation_instrumentation.emplace ("opendir", 0);
+    Env::m_operation_instrumentation.emplace ("fdopendir", 0);
+    Env::m_operation_instrumentation.emplace ("closedir", 0);
+    Env::m_operation_instrumentation.emplace ("rmdir", 0);
+    Env::m_operation_instrumentation.emplace ("dirfd", 0);
+
+    // extended-attributes operations
+    Env::m_operation_instrumentation.emplace ("getxattr", 0);
+    Env::m_operation_instrumentation.emplace ("lgetxattr", 0);
+    Env::m_operation_instrumentation.emplace ("fgetxattr", 0);
+    Env::m_operation_instrumentation.emplace ("setxattr", 0);
+    Env::m_operation_instrumentation.emplace ("lsetxattr", 0);
+    Env::m_operation_instrumentation.emplace ("fsetxattr", 0);
+    Env::m_operation_instrumentation.emplace ("listxattr", 0);
+    Env::m_operation_instrumentation.emplace ("llistxattr", 0);
+    Env::m_operation_instrumentation.emplace ("flistxattr", 0);
+    Env::m_operation_instrumentation.emplace ("removexattr", 0);
+    Env::m_operation_instrumentation.emplace ("lremovexattr", 0);
+    Env::m_operation_instrumentation.emplace ("fremovexattr", 0);
+
+    // file modes operations
+    Env::m_operation_instrumentation.emplace ("chmod", 0);
+    Env::m_operation_instrumentation.emplace ("fchmod", 0);
+    Env::m_operation_instrumentation.emplace ("fchmodat", 0);
+    Env::m_operation_instrumentation.emplace ("chown", 0);
+    Env::m_operation_instrumentation.emplace ("lchown", 0);
+    Env::m_operation_instrumentation.emplace ("fchown", 0);
+    Env::m_operation_instrumentation.emplace ("fchownat", 0);
+
+  }
+
+  static void print_instrumentation_results () {
+    std::cout << "------------------------\n";
+    std::cout << "Instrumentation results:\n";
+    std::cout << "------------------------\n";
+
+    for (auto& elem : Env::m_operation_instrumentation) {
+      std::cout << elem.first << ": " << elem.second << "\n";
+    }
   }
 
  private:
@@ -776,7 +951,11 @@ PosixEnv::PosixEnv()
     : background_work_cv_(&background_work_mutex_),
       started_background_thread_(false),
       mmap_limiter_(MaxMmaps()),
-      fd_limiter_(MaxOpenFiles()) {}
+      fd_limiter_(MaxOpenFiles())
+{
+  std::cout << "PosixEnv was invoked ...\n";
+  this->initialize_instrumentation_container();
+}
 
 void PosixEnv::Schedule(
     void (*background_work_function)(void* background_work_arg),
@@ -845,7 +1024,12 @@ class SingletonEnv {
                   "env_storage_ does not meet the Env's alignment needs");
     new (&env_storage_) EnvType();
   }
-  ~SingletonEnv() = default;
+  // ~SingletonEnv() = default;
+  ~SingletonEnv() {
+    std::cout << "SingletonEnv destructor called.\n";
+
+    PosixEnv::print_instrumentation_results ();
+  }
 
   SingletonEnv(const SingletonEnv&) = delete;
   SingletonEnv& operator=(const SingletonEnv&) = delete;
